@@ -1,0 +1,132 @@
+---
+title: "HAR data prediction"
+author: "Stefan Loska"
+date: "01/25/2015"
+output: html_document
+---
+
+## Introduction
+
+The aim of this exercise was to construct a prediction model able to predict the way of performing a physical exercise on the basis of the data obtained with accelerometers. The experiment is described at Human Activity Recognition project website: http://groupware.les.inf.puc-rio.br/har. Briefly, candidates were asked to perform dumbbell lifts in 5 different ways:
+
+* A - exactly according to the specification
+* B - throwing the elbows to the front
+* C - lifting the dumbbell only halfway
+* D - lowering the dumbbell only halfway
+* E - and throwing the hips to the front
+
+Accelerometers were placed on the belt, forearm, arm, and dumbbell of 6 participants. We want to predict the way of performing the exercise on the basis of the measurements.
+
+## Getting and cleaning data
+
+The training data was obtained from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and the validation was obtained from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv. Both were originally the data avaialble from the Human Activity Recognition project website: http://groupware.les.inf.puc-rio.br/har. The data was saved in pml-training.csv and pml-testing.csv files respectively and read as csv. Previous visual inspection of the file reveled the presence of "#DIV/0!" strings in place of numeric data, so this string was included in the na.strings argument.
+
+```{r}
+sensors=read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!"))
+valid=read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!"))
+```
+
+Numerous variables in the data set contained predominantly NA values. Since the fraction of valid values for such variables was just:
+
+```{r}
+(1-sum(is.na(sensors[,12]))/nrow(sensors))*100
+```
+
+percent, I decided not to impute the unknown data, but rather exclude the variables form the analysis:
+
+```{r}
+rem=which(is.na(sensors[1,]))
+```
+
+Furthermore, columns 1 to 7 contained data like index of the observation, user name and information about time and window. Since neither the index or the time of taking the exercise can define the correctness of the movements, I also decided to exclude these variables. However, I kept the user name column, since the differences in people anatomy might influence the result of the measurements, even if the exercise is performed in the same way.
+
+```{r}
+rem=c(1, 3:7, rem)
+```
+
+Selected columns were removed from the data set:
+
+```{r}
+sens=sensors[,-rem]
+```
+
+In the model building procedure, I used the train/test/validate approach. Therefore, the sens data was split into the training and testing sets using createDataPartition from the caret package. 75% of the data was used for training.
+
+```{r}
+library(caret)
+set.seed(100)
+inTrain=createDataPartition(sens$classe, p=0.75, list=FALSE)
+training=sens[inTrain,]
+testing=sens[-inTrain,]
+```
+
+## Model building
+
+### Decission tree
+
+Since we are dealing with a discrete unordered outcome, I did not choose to try linear model. Instead, I anticipated that a decision tree might be a good classifier. Therefore I ran:
+
+```{r rpart, cache=TRUE}
+set.seed(100)
+model_rpart = train(classe ~ ., data=training, method="rpart")
+```
+
+Using this model in sample accuracy of 0.51 was achieved, which is quite poor:
+
+```{r}
+model_rpart
+```
+
+Analyzing the created decision tree:
+
+```{r}
+library(rattle)
+fancyRpartPlot(model_rpart$finalModel)
+```
+
+one can observe that roll\_belt variable already allows to separate a pure leaf of class E. Next, pitch\_forearm allows to separate a leaf which is quite pure for A. However, in the following splits leaves are impure and the D class is completely missing.
+
+Not surprisingly, the model didn't perform great either on the testing set:
+
+```{r}
+predictions_rpart = predict(model_rpart, newdata=testing)
+confusionMatrix(predictions_rpart, testing$classe)
+```
+
+### Random forest
+
+To improve the accuracy, I decided to take advantage on bagging and used a random forest method:
+
+```{r rf, cache=TRUE}
+set.seed(100)
+model_rf = train(classe ~ ., data=training, method="rf")
+```
+
+With this method, a model with in sample accuracy of 0.99 was obtained:
+
+```{r}
+model_rf
+```
+
+Testing the model on the testing set gave 0.9927 accuracy:
+
+```{r}
+predictions_rf = predict(model_rf, newdata=testing)
+confusionMatrix(predictions_rf, testing$classe)
+```
+
+## Validation
+
+The model using random forest was validated using the validation set. Validation set was preprocessed in the same way as the training set, i.e. respective columns were removed. The following result were obtained:
+
+```{r}
+valid=valid[,-rem]
+predictions = predict(model_rf, newdata=valid)
+predictions
+```
+
+Using the submission part of the exercise, out of sample error was calculated which was equal to 0.
+
+## Conclusions
+
+Decision tree model was not accurate enough to predict the way of performing the bell lifting. However, switching to the random forest method allowed to construct a model predicting the classes with 0.99 accuracy. We used information about the user performing the exercise for prediction. In further research,  one might check if eliminating this variable doesn't decrease accuracy, i.e. if when application this system in practice person specific training will be required or an universal model can be used.
